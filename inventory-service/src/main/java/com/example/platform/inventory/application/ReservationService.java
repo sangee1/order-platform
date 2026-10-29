@@ -2,6 +2,8 @@ package com.example.platform.inventory.application;
 
 import com.example.platform.common.events.OrderCreated;
 import com.example.platform.common.events.OrderItemLine;
+import com.example.platform.common.events.ReleaseStockRequested;
+import com.example.platform.common.events.StockReleased;
 import com.example.platform.common.events.StockReservationFailed;
 import com.example.platform.common.events.StockReserved;
 import com.example.platform.common.events.Topics;
@@ -9,6 +11,7 @@ import com.example.platform.inventory.domain.InventoryItem;
 import com.example.platform.inventory.domain.InventoryItemRepository;
 import com.example.platform.inventory.domain.ProcessedMessage;
 import com.example.platform.inventory.domain.ProcessedMessageRepository;
+import com.example.platform.inventory.domain.ReservationStatus;
 import com.example.platform.inventory.domain.StockReservation;
 import com.example.platform.inventory.domain.StockReservationRepository;
 import com.example.platform.inventory.outbox.OutboxWriter;
@@ -16,6 +19,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -68,6 +72,33 @@ public class ReservationService {
         }
 
         // Unique PK: if two consumers race on the same message, exactly one commits.
+        processed.saveAndFlush(new ProcessedMessage(messageId));
+    }
+
+    /**
+     * Saga compensation. Returns every RESERVED line of the order to available stock. Always answers with
+     * StockReleased, even when nothing was reserved (or it was already released), because the orchestrator
+     * is waiting for that acknowledgement and the command may legitimately arrive more than once.
+     */
+    @Transactional
+    public void releaseForOrder(UUID messageId, ReleaseStockRequested command) {
+        if (processed.existsById(messageId)) {
+            return;
+        }
+
+        List<StockReservation> active = reservations.findByOrderIdAndStatus(command.orderId(), ReservationStatus.RESERVED);
+        if (!active.isEmpty()) {
+            Map<String, InventoryItem> bySku = items
+                    .findAllById(active.stream().map(StockReservation::getSku).distinct().toList())
+                    .stream().collect(Collectors.toMap(InventoryItem::getSku, i -> i));
+            for (StockReservation reservation : active) {
+                bySku.get(reservation.getSku()).release(reservation.getQuantity());
+                reservation.release();
+            }
+            items.saveAllAndFlush(bySku.values());
+        }
+
+        outbox.append(Topics.INVENTORY_EVENTS, new StockReleased(command.orderId()));
         processed.saveAndFlush(new ProcessedMessage(messageId));
     }
 

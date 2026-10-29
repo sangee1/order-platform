@@ -38,6 +38,10 @@ public class StockReservation {
         this.createdAt = Instant.now();
     }
 
+    public void release() {
+        this.status = ReservationStatus.RELEASED;
+    }
+
     public UUID getId() { return id; }
     public UUID getOrderId() { return orderId; }
     public String getSku() { return sku; }

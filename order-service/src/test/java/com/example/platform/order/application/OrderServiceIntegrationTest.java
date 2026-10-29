@@ -6,6 +6,7 @@ import com.example.platform.order.domain.Order;
 import com.example.platform.order.domain.OrderLine;
 import com.example.platform.order.domain.OrderRepository;
 import com.example.platform.order.domain.OrderStatus;
+import com.example.platform.order.outbox.OutboxEvent;
 import com.example.platform.order.outbox.OutboxRepository;
 import java.math.BigDecimal;
 import java.util.List;
@@ -30,6 +31,7 @@ class OrderServiceIntegrationTest {
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
     @Autowired OrderService service;
+    @Autowired OrderSaga saga;
     @Autowired OrderRepository orders;
     @Autowired OutboxRepository outbox;
 
@@ -40,6 +42,16 @@ class OrderServiceIntegrationTest {
         outbox.deleteAllInBatch();
         orders.deleteAll();
     }
+
+    private OrderStatus statusOf(Order o) {
+        return service.get(o.getId()).getStatus();
+    }
+
+    private List<String> emittedEvents() {
+        return outbox.findAll().stream().map(OutboxEvent::getEventType).toList();
+    }
+
+    // ---------- order creation ----------
 
     @Test
     void placingAnOrderWritesOutboxRowInSameTransaction() {
@@ -63,24 +75,54 @@ class OrderServiceIntegrationTest {
         assertThat(outbox.count()).isEqualTo(1);
     }
 
+    // ---------- saga ----------
+
     @Test
-    void stockReservedConfirmsOrderAndDuplicateDeliveryIsHarmless() {
+    void happyPathConfirmsOrderAfterPayment() {
         Order order = service.place("c-1", LINES, null);
 
-        service.onStockReserved(order.getId());
-        service.onStockReserved(order.getId());
+        saga.onStockReserved(order.getId());
+        assertThat(statusOf(order)).isEqualTo(OrderStatus.PAYMENT_PENDING);
+        assertThat(emittedEvents()).containsExactlyInAnyOrder("OrderCreated", "PaymentRequested");
 
-        assertThat(service.get(order.getId()).getStatus()).isEqualTo(OrderStatus.CONFIRMED);
+        saga.onPaymentCompleted(order.getId());
+        assertThat(statusOf(order)).isEqualTo(OrderStatus.CONFIRMED);
     }
 
     @Test
-    void stockReservationFailureRejectsOrderWithReason() {
+    void duplicateStockReservedRequestsPaymentOnlyOnce() {
         Order order = service.place("c-1", LINES, null);
 
-        service.onStockReservationFailed(order.getId(), "Insufficient stock for SKU-1");
+        saga.onStockReserved(order.getId());
+        saga.onStockReserved(order.getId());
 
-        Order reloaded = service.get(order.getId());
-        assertThat(reloaded.getStatus()).isEqualTo(OrderStatus.REJECTED);
-        assertThat(reloaded.getFailureReason()).contains("SKU-1");
+        assertThat(outbox.countByEventType("PaymentRequested")).isEqualTo(1);
+    }
+
+    @Test
+    void paymentFailureCompensatesByReleasingStock() {
+        Order order = service.place("c-1", LINES, null);
+        saga.onStockReserved(order.getId());
+
+        saga.onPaymentFailed(order.getId(), "Card declined");
+        saga.onPaymentFailed(order.getId(), "Card declined"); // duplicate
+
+        assertThat(statusOf(order)).isEqualTo(OrderStatus.CANCELLING);
+        assertThat(service.get(order.getId()).getFailureReason()).contains("Card declined");
+        assertThat(outbox.countByEventType("ReleaseStockRequested")).isEqualTo(1);
+
+        saga.onStockReleased(order.getId());
+        assertThat(statusOf(order)).isEqualTo(OrderStatus.CANCELLED);
+    }
+
+    @Test
+    void stockFailureRejectsOrderWithoutRequestingPayment() {
+        Order order = service.place("c-1", LINES, null);
+
+        saga.onStockReservationFailed(order.getId(), "Insufficient stock for SKU-1");
+
+        assertThat(statusOf(order)).isEqualTo(OrderStatus.REJECTED);
+        assertThat(service.get(order.getId()).getFailureReason()).contains("SKU-1");
+        assertThat(emittedEvents()).containsExactly("OrderCreated");
     }
 }

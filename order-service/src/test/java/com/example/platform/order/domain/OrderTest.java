@@ -21,19 +21,43 @@ class OrderTest {
     }
 
     @Test
-    void confirmIsIdempotent() {
+    void happyPathTransitionsAreIdempotent() {
         Order o = newOrder();
-        o.confirm();
-        o.confirm();
+
+        assertThat(o.awaitPayment()).isTrue();
+        assertThat(o.awaitPayment()).isFalse();   // duplicate StockReserved
+        assertThat(o.confirm()).isTrue();
+        assertThat(o.confirm()).isFalse();        // duplicate PaymentCompleted
         assertThat(o.getStatus()).isEqualTo(OrderStatus.CONFIRMED);
+        assertThat(o.awaitPayment()).isFalse();   // late duplicate after completion is ignored
     }
 
     @Test
-    void rejectedOrderCannotBeConfirmed() {
+    void paymentFailureLeadsToCancelledViaCancelling() {
         Order o = newOrder();
-        o.reject("out of stock");
+        o.awaitPayment();
+
+        assertThat(o.startCancellation("declined")).isTrue();
+        assertThat(o.getStatus()).isEqualTo(OrderStatus.CANCELLING);
+        assertThat(o.startCancellation("declined")).isFalse();
+        assertThat(o.cancel()).isTrue();
+        assertThat(o.cancel()).isFalse();
+        assertThat(o.getStatus()).isEqualTo(OrderStatus.CANCELLED);
+        assertThat(o.getFailureReason()).isEqualTo("declined");
+    }
+
+    @Test
+    void stockFailureRejectsAndCannotProceedToPayment() {
+        Order o = newOrder();
+        assertThat(o.reject("out of stock")).isTrue();
+
         assertThat(o.getFailureReason()).isEqualTo("out of stock");
-        assertThatThrownBy(o::confirm).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(o::awaitPayment).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void cannotConfirmWithoutPaymentStep() {
+        assertThatThrownBy(() -> newOrder().confirm()).isInstanceOf(IllegalStateException.class);
     }
 
     @Test

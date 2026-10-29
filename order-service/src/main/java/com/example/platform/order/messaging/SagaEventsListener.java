@@ -5,11 +5,13 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import com.example.platform.common.events.DomainEvent;
 import com.example.platform.common.events.EventCodec;
 import com.example.platform.common.events.EventHeaders;
-import com.example.platform.common.events.OrderCreated;
+import com.example.platform.common.events.PaymentCompleted;
+import com.example.platform.common.events.PaymentFailed;
+import com.example.platform.common.events.StockReleased;
 import com.example.platform.common.events.StockReservationFailed;
 import com.example.platform.common.events.StockReserved;
 import com.example.platform.common.events.Topics;
-import com.example.platform.order.application.OrderService;
+import com.example.platform.order.application.OrderSaga;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.header.Header;
 import org.slf4j.Logger;
@@ -17,18 +19,19 @@ import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
+/** Receives the replies of the other services and feeds them to the saga. */
 @Component
-class InventoryEventsListener {
+class SagaEventsListener {
 
-    private static final Logger log = LoggerFactory.getLogger(InventoryEventsListener.class);
+    private static final Logger log = LoggerFactory.getLogger(SagaEventsListener.class);
 
-    private final OrderService orders;
+    private final OrderSaga saga;
 
-    InventoryEventsListener(OrderService orders) {
-        this.orders = orders;
+    SagaEventsListener(OrderSaga saga) {
+        this.saga = saga;
     }
 
-    @KafkaListener(topics = Topics.INVENTORY_EVENTS)
+    @KafkaListener(topics = {Topics.INVENTORY_EVENTS, Topics.PAYMENT_EVENTS})
     void on(ConsumerRecord<String, String> record) {
         Header type = record.headers().lastHeader(EventHeaders.EVENT_TYPE);
         if (type == null) {
@@ -36,11 +39,13 @@ class InventoryEventsListener {
         }
         DomainEvent event = EventCodec.fromJson(new String(type.value(), UTF_8), record.value());
 
-        // Sealed type + pattern matching: adding an event type without handling it here fails to compile.
         switch (event) {
-            case StockReserved e -> orders.onStockReserved(e.orderId());
-            case StockReservationFailed e -> orders.onStockReservationFailed(e.orderId(), e.reason());
-            case OrderCreated e -> log.debug("Ignoring {} on {}", e.eventType(), Topics.INVENTORY_EVENTS);
+            case StockReserved e -> saga.onStockReserved(e.orderId());
+            case StockReservationFailed e -> saga.onStockReservationFailed(e.orderId(), e.reason());
+            case PaymentCompleted e -> saga.onPaymentCompleted(e.orderId());
+            case PaymentFailed e -> saga.onPaymentFailed(e.orderId(), e.reason());
+            case StockReleased e -> saga.onStockReleased(e.orderId());
+            default -> log.debug("Ignoring {} on {}", event.eventType(), record.topic());
         }
     }
 }

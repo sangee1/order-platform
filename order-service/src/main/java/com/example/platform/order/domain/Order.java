@@ -17,6 +17,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * Order aggregate and saga state machine. Every transition method returns true when it changed state and
+ * false when the event was a harmless duplicate, so the orchestrator knows whether to emit follow-up commands.
+ * A transition that makes no sense from the current state throws (the message then ends up in the DLT).
+ */
 @Entity
 @Table(name = "orders")
 public class Order {
@@ -62,26 +67,58 @@ public class Order {
         return o;
     }
 
-    /** Idempotent: a redelivered StockReserved event is a no-op. */
-    public void confirm() {
-        if (status == OrderStatus.CONFIRMED) return;
-        requirePending();
-        status = OrderStatus.CONFIRMED;
+    /** Stock is reserved: PENDING -> PAYMENT_PENDING. */
+    public boolean awaitPayment() {
+        return switch (status) {
+            case PENDING -> { moveTo(OrderStatus.PAYMENT_PENDING); yield true; }
+            case PAYMENT_PENDING, CONFIRMED, CANCELLING, CANCELLED -> false;
+            case REJECTED -> throw illegal("await payment for");
+        };
+    }
+
+    /** Stock could not be reserved: PENDING -> REJECTED. */
+    public boolean reject(String reason) {
+        return switch (status) {
+            case PENDING -> { failureReason = reason; moveTo(OrderStatus.REJECTED); yield true; }
+            case REJECTED -> false;
+            default -> throw illegal("reject");
+        };
+    }
+
+    /** Payment succeeded: PAYMENT_PENDING -> CONFIRMED. */
+    public boolean confirm() {
+        return switch (status) {
+            case PAYMENT_PENDING -> { moveTo(OrderStatus.CONFIRMED); yield true; }
+            case CONFIRMED -> false;
+            default -> throw illegal("confirm");
+        };
+    }
+
+    /** Payment failed, stock must be given back: PAYMENT_PENDING -> CANCELLING. */
+    public boolean startCancellation(String reason) {
+        return switch (status) {
+            case PAYMENT_PENDING -> { failureReason = reason; moveTo(OrderStatus.CANCELLING); yield true; }
+            case CANCELLING, CANCELLED -> false;
+            default -> throw illegal("start cancelling");
+        };
+    }
+
+    /** Compensation finished: CANCELLING -> CANCELLED. */
+    public boolean cancel() {
+        return switch (status) {
+            case CANCELLING -> { moveTo(OrderStatus.CANCELLED); yield true; }
+            case CANCELLED -> false;
+            default -> throw illegal("cancel");
+        };
+    }
+
+    private void moveTo(OrderStatus next) {
+        status = next;
         updatedAt = Instant.now();
     }
 
-    public void reject(String reason) {
-        if (status == OrderStatus.REJECTED) return;
-        requirePending();
-        status = OrderStatus.REJECTED;
-        failureReason = reason;
-        updatedAt = Instant.now();
-    }
-
-    private void requirePending() {
-        if (status != OrderStatus.PENDING) {
-            throw new IllegalStateException("Order " + id + " is " + status + ", expected PENDING");
-        }
+    private IllegalStateException illegal(String action) {
+        return new IllegalStateException("Cannot " + action + " order " + id + " in status " + status);
     }
 
     public UUID getId() { return id; }

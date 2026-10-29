@@ -4,9 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.example.platform.common.events.OrderCreated;
 import com.example.platform.common.events.OrderItemLine;
+import com.example.platform.common.events.ReleaseStockRequested;
 import com.example.platform.inventory.domain.InventoryItem;
 import com.example.platform.inventory.domain.InventoryItemRepository;
 import com.example.platform.inventory.domain.ProcessedMessageRepository;
+import com.example.platform.inventory.domain.ReservationStatus;
 import com.example.platform.inventory.domain.StockReservationRepository;
 import com.example.platform.inventory.outbox.OutboxRepository;
 import java.math.BigDecimal;
@@ -101,5 +103,39 @@ class ReservationConcurrencyTest {
         assertThat(items.findById(SKU).orElseThrow().getAvailableQuantity()).isEqualTo(2);
         assertThat(reservations.findByOrderId(order.orderId())).isEmpty();
         assertThat(outbox.countByEventType("StockReservationFailed")).isEqualTo(1);
+    }
+
+    @Test
+    void releaseReturnsReservedStockAndIsIdempotent() {
+        items.save(new InventoryItem(SKU, 10));
+        OrderCreated order = order(4);
+        facade.handle(UUID.randomUUID(), order);
+        assertThat(items.findById(SKU).orElseThrow().getAvailableQuantity()).isEqualTo(6);
+
+        UUID releaseMessage = UUID.randomUUID();
+        var release = new ReleaseStockRequested(order.orderId(), "payment failed");
+        facade.handleRelease(releaseMessage, release);
+        facade.handleRelease(releaseMessage, release);        // same message redelivered
+
+        InventoryItem item = items.findById(SKU).orElseThrow();
+        assertThat(item.getAvailableQuantity()).isEqualTo(10);
+        assertThat(item.getReservedQuantity()).isZero();
+        assertThat(reservations.findByOrderId(order.orderId()))
+                .singleElement().extracting("status").isEqualTo(ReservationStatus.RELEASED);
+        assertThat(outbox.countByEventType("StockReleased")).isEqualTo(1);
+
+        facade.handleRelease(UUID.randomUUID(), release);     // re-issued as a NEW message: stock must not double-count
+        assertThat(items.findById(SKU).orElseThrow().getAvailableQuantity()).isEqualTo(10);
+        assertThat(outbox.countByEventType("StockReleased")).isEqualTo(2);
+    }
+
+    @Test
+    void releaseWithNothingReservedStillAcknowledges() {
+        items.save(new InventoryItem(SKU, 10));
+
+        facade.handleRelease(UUID.randomUUID(), new ReleaseStockRequested(UUID.randomUUID(), "payment failed"));
+
+        assertThat(items.findById(SKU).orElseThrow().getAvailableQuantity()).isEqualTo(10);
+        assertThat(outbox.countByEventType("StockReleased")).isEqualTo(1);
     }
 }

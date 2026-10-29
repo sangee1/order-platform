@@ -34,6 +34,16 @@ public class PlatformKafkaConfig {
         return topic(Topics.INVENTORY_EVENTS + ".DLT");
     }
 
+    @Bean
+    NewTopic paymentEventsTopic() {
+        return topic(Topics.PAYMENT_EVENTS);
+    }
+
+    @Bean
+    NewTopic paymentEventsDlt() {
+        return topic(Topics.PAYMENT_EVENTS + ".DLT");
+    }
+
     /** Retry 3x at 1s intervals, then publish the record to "<topic>.DLT". Poison pills skip retries. */
     @Bean
     DefaultErrorHandler kafkaErrorHandler(KafkaTemplate<String, String> template) {

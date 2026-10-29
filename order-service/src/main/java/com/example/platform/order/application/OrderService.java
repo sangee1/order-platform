@@ -13,6 +13,7 @@ import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+/** Entry point of the saga: creates the order. Everything after that is driven by {@link OrderSaga}. */
 @Service
 public class OrderService {
 
@@ -53,15 +54,5 @@ public class OrderService {
     @Transactional(readOnly = true)
     public Optional<Order> findByIdempotencyKey(String key) {
         return orders.findByIdempotencyKey(key);
-    }
-
-    @Transactional
-    public void onStockReserved(UUID orderId) {
-        orders.findById(orderId).orElseThrow(() -> new OrderNotFoundException(orderId)).confirm();
-    }
-
-    @Transactional
-    public void onStockReservationFailed(UUID orderId, String reason) {
-        orders.findById(orderId).orElseThrow(() -> new OrderNotFoundException(orderId)).reject(reason);
     }
 }

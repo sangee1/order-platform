@@ -1,6 +1,6 @@
 # ADR 0003: Start with choreography, move to orchestration when payment is added
 
-**Status:** Accepted (to be revisited)
+**Status:** Superseded by [ADR 0004](0004-orchestrated-saga-with-compensation.md)
 
 ## Context
 Today the flow has two participants (order, inventory), so services simply react to each other's events.

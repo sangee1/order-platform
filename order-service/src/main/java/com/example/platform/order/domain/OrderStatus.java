@@ -1,6 +1,13 @@
 package com.example.platform.order.domain;
 
-/** PENDING -> CONFIRMED | REJECTED. Payment states (PAYMENT_PENDING, PAID...) arrive with payment-service. */
+/**
+ * Saga states.
+ * <pre>
+ * PENDING ──stock reserved──► PAYMENT_PENDING ──payment ok──► CONFIRMED
+ *    │                              │
+ *    └─stock failed─► REJECTED      └─payment failed─► CANCELLING ──stock released──► CANCELLED
+ * </pre>
+ */
 public enum OrderStatus {
-    PENDING, CONFIRMED, REJECTED
+    PENDING, PAYMENT_PENDING, CONFIRMED, REJECTED, CANCELLING, CANCELLED
 }

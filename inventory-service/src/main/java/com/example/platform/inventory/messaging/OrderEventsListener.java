@@ -6,8 +6,7 @@ import com.example.platform.common.events.DomainEvent;
 import com.example.platform.common.events.EventCodec;
 import com.example.platform.common.events.EventHeaders;
 import com.example.platform.common.events.OrderCreated;
-import com.example.platform.common.events.StockReservationFailed;
-import com.example.platform.common.events.StockReserved;
+import com.example.platform.common.events.ReleaseStockRequested;
 import com.example.platform.common.events.Topics;
 import com.example.platform.inventory.application.ReservationFacade;
 import java.util.UUID;
@@ -37,8 +36,8 @@ class OrderEventsListener {
 
         switch (event) {
             case OrderCreated e -> reservations.handle(messageId, e);
-            case StockReserved e -> log.debug("Ignoring {} on {}", e.eventType(), Topics.ORDER_EVENTS);
-            case StockReservationFailed e -> log.debug("Ignoring {} on {}", e.eventType(), Topics.ORDER_EVENTS);
+            case ReleaseStockRequested e -> reservations.handleRelease(messageId, e);
+            default -> log.debug("Ignoring {} on {}", event.eventType(), Topics.ORDER_EVENTS);
         }
     }
 

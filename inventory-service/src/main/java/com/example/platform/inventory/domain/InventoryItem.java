@@ -42,6 +42,15 @@ public class InventoryItem {
         reservedQuantity += quantity;
     }
 
+    /** Compensation: reserved stock goes back to available. */
+    public void release(int quantity) {
+        if (quantity <= 0 || reservedQuantity < quantity) {
+            throw new IllegalStateException("Cannot release " + quantity + " of " + sku + " (reserved: " + reservedQuantity + ")");
+        }
+        reservedQuantity -= quantity;
+        availableQuantity += quantity;
+    }
+
     public void restock(int quantity) {
         if (quantity <= 0) throw new IllegalArgumentException("quantity must be positive");
         availableQuantity += quantity;

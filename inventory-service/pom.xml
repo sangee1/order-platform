@@ -8,9 +8,6 @@
         <version>0.1.0-SNAPSHOT</version>
     </parent>
     <artifactId>inventory-service</artifactId>
-    <properties>
-        <testcontainers.version>1.21.4</testcontainers.version>
-    </properties>
 
     <dependencies>
         <dependency><groupId>com.example.platform</groupId><artifactId>common</artifactId></dependency>
