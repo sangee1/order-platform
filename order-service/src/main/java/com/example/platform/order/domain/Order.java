@@ -37,6 +37,8 @@ public class Order {
     private BigDecimal totalAmount;
     private String failureReason;
     private String idempotencyKey;
+    @Column(nullable = false)
+    private int paymentAttempts;
 
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "order_item", joinColumns = @JoinColumn(name = "order_id"))
@@ -70,7 +72,7 @@ public class Order {
     /** Stock is reserved: PENDING -> PAYMENT_PENDING. */
     public boolean awaitPayment() {
         return switch (status) {
-            case PENDING -> { moveTo(OrderStatus.PAYMENT_PENDING); yield true; }
+            case PENDING -> { paymentAttempts = 1; moveTo(OrderStatus.PAYMENT_PENDING); yield true; }
             case PAYMENT_PENDING, CONFIRMED, CANCELLING, CANCELLED -> false;
             case REJECTED -> throw illegal("await payment for");
         };
@@ -112,6 +114,42 @@ public class Order {
         };
     }
 
+    /**
+     * Saga timeout: stop waiting and compensate. Valid while we still wait for stock or payment.
+     * The compensation (ReleaseStockRequested) is safe even if nothing was reserved.
+     */
+    public boolean expire(String reason) {
+        return switch (status) {
+            case PENDING, PAYMENT_PENDING -> { failureReason = reason; moveTo(OrderStatus.CANCELLING); yield true; }
+            case CANCELLING, CANCELLED -> false;
+            default -> throw illegal("expire");
+        };
+    }
+
+    /**
+     * Timeout while waiting for payment: ask again, up to maxAttempts requests in total. Restarts the timeout
+     * window. Returns false when attempts are used up (the caller should then expire the order).
+     */
+    public boolean retryPayment(int maxAttempts) {
+        if (status != OrderStatus.PAYMENT_PENDING) {
+            throw illegal("retry payment for");
+        }
+        if (paymentAttempts >= maxAttempts) {
+            return false;
+        }
+        paymentAttempts++;
+        updatedAt = Instant.now();
+        return true;
+    }
+
+    /** Timeout while compensating: the release command is being re-sent, so restart the timeout window. */
+    public void markCompensationRetried() {
+        if (status != OrderStatus.CANCELLING) {
+            throw illegal("retry compensation for");
+        }
+        updatedAt = Instant.now();
+    }
+
     private void moveTo(OrderStatus next) {
         status = next;
         updatedAt = Instant.now();
@@ -127,6 +165,7 @@ public class Order {
     public BigDecimal getTotalAmount() { return totalAmount; }
     public String getFailureReason() { return failureReason; }
     public String getIdempotencyKey() { return idempotencyKey; }
+    public int getPaymentAttempts() { return paymentAttempts; }
     public List<OrderLine> getItems() { return List.copyOf(items); }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }

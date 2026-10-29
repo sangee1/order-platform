@@ -21,6 +21,7 @@
         <!-- Newer Docker Engines reject the API version used by Testcontainers 1.19.x (Spring Boot 3.3 default) -->
         <testcontainers.version>1.21.4</testcontainers.version>
         <springdoc.version>2.6.0</springdoc.version>
+        <resilience4j.version>2.2.0</resilience4j.version>
     </properties>
 
     <modules>
@@ -36,6 +37,11 @@
                 <groupId>com.example.platform</groupId>
                 <artifactId>common</artifactId>
                 <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.github.resilience4j</groupId>
+                <artifactId>resilience4j-spring-boot3</artifactId>
+                <version>${resilience4j.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.springdoc</groupId>

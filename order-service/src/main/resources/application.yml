@@ -43,3 +43,14 @@ management:
     web:
       exposure:
         include: health,info,metrics,prometheus
+
+saga:
+  sweeper:
+    enabled: true
+    interval-ms: 15000
+    batch-size: 50
+  timeout:                      # time an order may sit in a state before recovery acts
+    pending: PT2M               # waiting for stock
+    payment: PT1M               # waiting for payment (re-requested up to max-payment-attempts)
+    cancelling: PT1M            # waiting for stock release (re-sent until acknowledged)
+    max-payment-attempts: 3

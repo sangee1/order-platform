@@ -83,6 +83,38 @@ curl -s -X POST localhost:8080/api/orders -H 'Content-Type: application/json' \
 Swagger UI: `/swagger-ui.html` on ports 8080, 8081 and 8082.
 Metrics: `/actuator/prometheus` on every service.
 
+## Failure demos
+
+Ready-made request bodies live in [`docs/demo`](docs/demo), which avoids shell-quoting problems on Windows
+(use `curl.exe`, and `-d @file`). In `docker compose` the saga timeouts are shortened to 15-30 seconds.
+
+```bash
+# Happy path / payment declined / no stock
+curl.exe -X POST http://localhost:8080/api/orders -H "Content-Type: application/json" -d @docs/demo/order-happy.json
+curl.exe -X POST http://localhost:8080/api/orders -H "Content-Type: application/json" -d @docs/demo/order-declined.json
+curl.exe -X POST http://localhost:8080/api/orders -H "Content-Type: application/json" -d @docs/demo/order-no-stock.json
+```
+
+**Gateway outage: circuit breaker + saga recovery**
+
+```bash
+# 1. Break the payment gateway (every call fails with a 503-style error)
+curl.exe -X PUT http://localhost:8082/api/admin/gateway -H "Content-Type: application/json" -d @docs/demo/gateway-down.json
+
+# 2. Place an order. It stays PAYMENT_PENDING; payment-service logs "gateway unavailable" and the breaker opens.
+curl.exe -X POST http://localhost:8080/api/orders -H "Content-Type: application/json" -d @docs/demo/order-happy.json
+curl.exe http://localhost:8082/actuator/circuitbreakers
+
+# 3a. Heal it within ~30 s: the saga re-requests payment and the order becomes CONFIRMED (no double charge)
+curl.exe -X PUT http://localhost:8082/api/admin/gateway -H "Content-Type: application/json" -d @docs/demo/gateway-up.json
+
+# 3b. ...or leave it broken: after 3 attempts the order is expired -> CANCELLING -> CANCELLED and stock is released
+curl.exe http://localhost:8080/api/orders/<id>
+```
+
+Useful while watching: `docker compose logs -f order-service payment-service`, and the metric
+`saga_recovery_total` at `http://localhost:8080/actuator/prometheus`.
+
 ## Tests
 
 ```bash
@@ -92,17 +124,20 @@ mvn verify        # needs Docker running (Testcontainers starts PostgreSQL)
 Highlights:
 - `ReservationConcurrencyTest`: 25 concurrent orders for 10 units must produce exactly 10 reservations; stock release is idempotent.
 - `OrderServiceIntegrationTest`: every saga path (happy, stock failure, payment failure with compensation) plus duplicate-event safety.
-- `PaymentHandlerIntegrationTest` / `MockPaymentGatewayTest`: one charge per order even on redelivery.
+- `PaymentHandlerIntegrationTest`: one charge per order even on redelivery; a gateway outage records nothing and stays retryable.
+- `ResilientPaymentGatewayTest`: retries, decline-is-not-a-failure, circuit opens and fails fast, timeout cut-off.
+- Saga recovery tests: stuck orders are expired, payment re-requested then cancelled, release re-sent.
 - `OrderTest`: the state machine's legal and illegal transitions.
 
 ## Design decisions
-See [`docs/adr`](docs/adr): outbox, optimistic locking, choreography then orchestrated saga, gateway call outside the transaction.
+See [`docs/adr`](docs/adr): outbox, optimistic locking, choreography then orchestrated saga, gateway call outside the transaction, saga timeout recovery, gateway resilience.
 
 ## Roadmap
 - [x] order + inventory with outbox, idempotent consumers, optimistic locking
 - [x] payment-service and orchestrated saga with compensation
-- [ ] saga timeout sweeper for orders stuck in PAYMENT_PENDING / CANCELLING
-- [ ] Resilience4j (timeout, retry, circuit breaker) around the payment gateway
+- [x] saga timeout sweeper for orders stuck in PAYMENT_PENDING / CANCELLING / PENDING
+- [x] Resilience4j (timeout, retry, circuit breaker, bulkhead) around the payment gateway
+- [ ] refund compensation for a payment that completes after the order was expired (see ADR 0006)
 - [ ] notification-service
 - [ ] api-gateway (Spring Cloud Gateway) + Keycloak OAuth2/JWT + rate limiting (Redis)
 - [ ] OpenTelemetry tracing across Kafka hops, Prometheus + Grafana dashboards

@@ -64,4 +64,38 @@ class OrderTest {
     void emptyOrderIsRejected() {
         assertThatThrownBy(() -> Order.place("c-1", List.of(), null)).isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void expireCompensatesWhileWaitingForStockOrPayment() {
+        Order waitingForStock = newOrder();
+        assertThat(waitingForStock.expire("timeout")).isTrue();
+        assertThat(waitingForStock.getStatus()).isEqualTo(OrderStatus.CANCELLING);
+        assertThat(waitingForStock.expire("timeout")).isFalse();
+
+        Order waitingForPayment = newOrder();
+        waitingForPayment.awaitPayment();
+        assertThat(waitingForPayment.expire("timeout")).isTrue();
+        assertThat(waitingForPayment.getFailureReason()).isEqualTo("timeout");
+    }
+
+    @Test
+    void confirmedOrderCannotExpire() {
+        Order o = newOrder();
+        o.awaitPayment();
+        o.confirm();
+
+        assertThatThrownBy(() -> o.expire("late")).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void paymentIsRetriedUpToMaxAttempts() {
+        Order o = newOrder();
+        o.awaitPayment();
+        assertThat(o.getPaymentAttempts()).isEqualTo(1);
+
+        assertThat(o.retryPayment(3)).isTrue();
+        assertThat(o.retryPayment(3)).isTrue();
+        assertThat(o.getPaymentAttempts()).isEqualTo(3);
+        assertThat(o.retryPayment(3)).isFalse();
+    }
 }

@@ -38,14 +38,51 @@ outbox:
     poll-interval-ms: 500
     batch-size: 100
 
-# Mock payment gateway behaviour (demo/testing)
 payment:
-  mock:
-    decline-above: 1000.00     # amounts above this are always declined: deterministic way to demo compensation
-    failure-rate: 0.0          # 0..1 chance of a random decline for amounts under the limit
+  gateway:
+    timeout: PT2S                 # per-attempt timeout for a gateway call
+  mock:                           # behaviour of the mock gateway (demo/testing only)
+    decline-above: 1000.00        # business decline: amounts above this are always declined
+    failure-rate: 0.0             # business decline: random chance for amounts under the limit
+    transient-failure-rate: 0.0   # technical failure (like HTTP 503): chance a call throws. Change live via /api/admin/gateway
+    latency-ms: 0                 # artificial latency per call. Change live via /api/admin/gateway
+
+# Fault tolerance for the payment gateway. Only technical failures (PaymentGatewayException) are
+# retried and counted by the breaker; a card decline is a normal business answer, not a failure.
+resilience4j:
+  retry:
+    instances:
+      paymentGateway:
+        max-attempts: 3
+        wait-duration: 200ms
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        retry-exceptions:
+          - com.example.platform.payment.gateway.PaymentGatewayException
+  circuitbreaker:
+    instances:
+      paymentGateway:
+        register-health-indicator: true
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 15s
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+        record-exceptions:
+          - com.example.platform.payment.gateway.PaymentGatewayException
+  bulkhead:
+    instances:
+      paymentGateway:
+        max-concurrent-calls: 10
+        max-wait-duration: 0
 
 management:
+  health:
+    circuitbreakers:
+      enabled: true
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,prometheus
+        include: health,info,metrics,prometheus,circuitbreakers,circuitbreakerevents

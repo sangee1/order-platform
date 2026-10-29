@@ -9,6 +9,8 @@ import com.example.platform.order.domain.OrderStatus;
 import com.example.platform.order.outbox.OutboxEvent;
 import com.example.platform.order.outbox.OutboxRepository;
 import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -22,7 +24,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @SpringBootTest(properties = {
         "spring.kafka.listener.auto-startup=false",
         "spring.kafka.admin.auto-create=false",
-        "outbox.publisher.enabled=false"})
+        "outbox.publisher.enabled=false",
+        "saga.sweeper.enabled=false"})
 @Testcontainers
 class OrderServiceIntegrationTest {
 
@@ -32,6 +35,7 @@ class OrderServiceIntegrationTest {
 
     @Autowired OrderService service;
     @Autowired OrderSaga saga;
+    @Autowired SagaRecovery recovery;
     @Autowired OrderRepository orders;
     @Autowired OutboxRepository outbox;
 
@@ -124,5 +128,82 @@ class OrderServiceIntegrationTest {
         assertThat(statusOf(order)).isEqualTo(OrderStatus.REJECTED);
         assertThat(service.get(order.getId()).getFailureReason()).contains("SKU-1");
         assertThat(emittedEvents()).containsExactly("OrderCreated");
+    }
+
+    // ---------- saga recovery (timeouts) ----------
+
+    private static Instant anHourFromNow() {
+        return Instant.now().plus(Duration.ofHours(1));
+    }
+
+    @Test
+    void recentOrdersAreNotTouchedByRecovery() {
+        Order order = service.place("c-1", LINES, null);
+
+        SagaRecovery.Report report = recovery.recoverStuckOrders(Instant.now());
+
+        assertThat(report.isEmpty()).isTrue();
+        assertThat(statusOf(order)).isEqualTo(OrderStatus.PENDING);
+    }
+
+    @Test
+    void orderStuckWaitingForStockIsExpiredAndCompensated() {
+        Order order = service.place("c-1", LINES, null);
+
+        SagaRecovery.Report report = recovery.recoverStuckOrders(anHourFromNow());
+
+        assertThat(report.expired()).isEqualTo(1);
+        assertThat(statusOf(order)).isEqualTo(OrderStatus.CANCELLING);
+        assertThat(service.get(order.getId()).getFailureReason()).contains("stock");
+        assertThat(outbox.countByEventType("ReleaseStockRequested")).isEqualTo(1);
+
+        saga.onStockReleased(order.getId());
+        assertThat(statusOf(order)).isEqualTo(OrderStatus.CANCELLED);
+    }
+
+    @Test
+    void paymentIsReRequestedThenOrderIsCancelledWhenAttemptsRunOut() {
+        Order order = service.place("c-1", LINES, null);
+        saga.onStockReserved(order.getId());                                   // attempt 1
+        assertThat(outbox.countByEventType("PaymentRequested")).isEqualTo(1);
+
+        Instant later = anHourFromNow();
+        assertThat(recovery.recoverStuckOrders(later).paymentRetried()).isEqualTo(1);   // attempt 2
+        assertThat(recovery.recoverStuckOrders(later).paymentRetried()).isEqualTo(1);   // attempt 3
+        assertThat(outbox.countByEventType("PaymentRequested")).isEqualTo(3);
+        assertThat(statusOf(order)).isEqualTo(OrderStatus.PAYMENT_PENDING);
+
+        SagaRecovery.Report last = recovery.recoverStuckOrders(later);                  // attempts used up
+        assertThat(last.expired()).isEqualTo(1);
+        assertThat(statusOf(order)).isEqualTo(OrderStatus.CANCELLING);
+        assertThat(service.get(order.getId()).getFailureReason()).contains("after 3 attempts");
+        assertThat(outbox.countByEventType("PaymentRequested")).isEqualTo(3);
+        assertThat(outbox.countByEventType("ReleaseStockRequested")).isEqualTo(1);
+    }
+
+    @Test
+    void lateConfirmationAfterARetryStillCompletesTheOrder() {
+        Order order = service.place("c-1", LINES, null);
+        saga.onStockReserved(order.getId());
+        recovery.recoverStuckOrders(anHourFromNow());                                   // payment re-requested
+
+        saga.onPaymentCompleted(order.getId());                                         // first attempt's reply arrives
+        saga.onPaymentCompleted(order.getId());                                         // and the re-request's reply
+
+        assertThat(statusOf(order)).isEqualTo(OrderStatus.CONFIRMED);
+    }
+
+    @Test
+    void releaseCommandIsResentWhileCancellingAndNotAcknowledged() {
+        Order order = service.place("c-1", LINES, null);
+        saga.onStockReserved(order.getId());
+        saga.onPaymentFailed(order.getId(), "Card declined");
+        assertThat(outbox.countByEventType("ReleaseStockRequested")).isEqualTo(1);
+
+        SagaRecovery.Report report = recovery.recoverStuckOrders(anHourFromNow());
+
+        assertThat(report.releaseResent()).isEqualTo(1);
+        assertThat(statusOf(order)).isEqualTo(OrderStatus.CANCELLING);
+        assertThat(outbox.countByEventType("ReleaseStockRequested")).isEqualTo(2);
     }
 }

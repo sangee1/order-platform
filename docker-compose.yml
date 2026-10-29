@@ -47,6 +47,11 @@ services:
       DB_USER: orders
       DB_PASSWORD: orders
       KAFKA_BOOTSTRAP: kafka:19092
+      # demo-friendly saga timeouts (defaults in application.yml are minutes)
+      SAGA_SWEEPER_INTERVAL_MS: 5000
+      SAGA_TIMEOUT_PENDING: PT30S
+      SAGA_TIMEOUT_PAYMENT: PT15S
+      SAGA_TIMEOUT_CANCELLING: PT15S
     ports: ["8080:8080"]
 
   inventory-service:
