@@ -19,4 +19,7 @@ public interface OutboxRepository extends JpaRepository<OutboxEvent, UUID> {
     List<OutboxEvent> lockNextBatch(@Param("batchSize") int batchSize);
 
     long countByEventType(String eventType);
+
+    /** Backlog size: exposed as the gauge outbox.pending. */
+    long countByPublishedAtIsNull();
 }

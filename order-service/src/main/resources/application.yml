@@ -31,6 +31,9 @@ spring:
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
     listener:
       ack-mode: record
+      observation-enabled: true    # consumer spans + trace propagation via headers
+    template:
+      observation-enabled: true    # producer spans
 
 outbox:
   publisher:
@@ -39,6 +42,18 @@ outbox:
     batch-size: 100
 
 management:
+  tracing:
+    sampling:
+      probability: 1.0                 # sample every request (demo); lower this in production
+  otlp:
+    tracing:
+      endpoint: http://localhost:4318/v1/traces   # overridden in docker compose
+  metrics:
+    tags:
+      application: ${spring.application.name}     # lets dashboards split by service
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true                # enables p95/p99 latency queries
   endpoints:
     web:
       exposure:
@@ -54,3 +69,7 @@ saga:
     payment: PT1M               # waiting for payment (re-requested up to max-payment-attempts)
     cancelling: PT1M            # waiting for stock release (re-sent until acknowledged)
     max-payment-attempts: 3
+
+logging:
+  pattern:
+    correlation: "[%X{traceId:-},%X{spanId:-}] "   # trace ids in every log line

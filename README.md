@@ -81,7 +81,28 @@ curl -s -X POST localhost:8080/api/orders -H 'Content-Type: application/json' \
 ```
 
 Swagger UI: `/swagger-ui.html` on ports 8080, 8081 and 8082.
-Metrics: `/actuator/prometheus` on every service.
+Metrics: `/actuator/prometheus` on every service. See [Observability](#observability) for dashboards and traces.
+
+## Observability
+
+| What | Where |
+|---|---|
+| Dashboard (Grafana) | http://localhost:3000, the "Order Platform" dashboard opens by default (edit with `admin` / `admin`) |
+| Traces (Jaeger) | http://localhost:16686 |
+| Raw metrics (Prometheus) | http://localhost:9090 |
+
+**Follow one order end to end.** Place an order, then in Jaeger choose service `order-service` and operation `POST /api/orders`.
+The trace spans order-service, inventory-service and payment-service, including the Kafka hops and the "outbox relay" steps.
+Every log line carries the trace id as `[traceId,spanId]`, so you can search the logs for it.
+
+The trace continues across the transactional outbox because each outbox row stores the W3C `traceparent` of the request that
+created it (see [ADR 0008](docs/adr/0008-observability.md)).
+
+**Dashboard panels:** orders by saga state, orders per second, API latency (p95/p99), outbox backlog, dead-lettered messages,
+saga recovery actions, payment circuit breaker state and call outcomes, Kafka consumer lag, JVM heap.
+
+**Try it:** run the gateway-outage demo from "Failure demos" and watch the breaker flip to `open`, orders pile up in
+`PAYMENT_PENDING`, the recovery counters rise, and then the orders drain to `CONFIRMED` or `CANCELLED`.
 
 ## Failure demos
 
@@ -130,7 +151,7 @@ Highlights:
 - `OrderTest`: the state machine's legal and illegal transitions.
 
 ## Design decisions
-See [`docs/adr`](docs/adr): outbox, optimistic locking, choreography then orchestrated saga, gateway call outside the transaction, saga timeout recovery, gateway resilience.
+See [`docs/adr`](docs/adr): outbox, optimistic locking, choreography then orchestrated saga, gateway call outside the transaction, saga timeout recovery, gateway resilience, observability.
 
 ## Roadmap
 - [x] order + inventory with outbox, idempotent consumers, optimistic locking
@@ -140,7 +161,7 @@ See [`docs/adr`](docs/adr): outbox, optimistic locking, choreography then orches
 - [ ] refund compensation for a payment that completes after the order was expired (see ADR 0006)
 - [ ] notification-service
 - [ ] api-gateway (Spring Cloud Gateway) + Keycloak OAuth2/JWT + rate limiting (Redis)
-- [ ] OpenTelemetry tracing across Kafka hops, Prometheus + Grafana dashboards
+- [x] OpenTelemetry tracing across Kafka hops, Prometheus + Grafana dashboards
 - [ ] Pact contract tests between services
 - [ ] k6 load test with results published here
 - [ ] Kubernetes manifests / Helm chart

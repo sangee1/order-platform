@@ -7,10 +7,11 @@ services:
       - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     ports: ["5432:5432"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres"]
       interval: 5s
-      timeout: 3s
-      retries: 10
+      timeout: 5s
+      retries: 20
+      start_period: 30s
 
   kafka:
     image: apache/kafka:3.8.0
@@ -47,11 +48,13 @@ services:
       DB_USER: orders
       DB_PASSWORD: orders
       KAFKA_BOOTSTRAP: kafka:19092
+      MANAGEMENT_OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
       # demo-friendly saga timeouts (defaults in application.yml are minutes)
       SAGA_SWEEPER_INTERVAL_MS: 5000
-      SAGA_TIMEOUT_PENDING: PT30S
-      SAGA_TIMEOUT_PAYMENT: PT15S
-      SAGA_TIMEOUT_CANCELLING: PT15S
+      SAGA_TIMEOUT_PENDING: PT2M
+      SAGA_TIMEOUT_PAYMENT: PT1M
+      SAGA_TIMEOUT_CANCELLING: PT1M
+      SPRING_THREADS_VIRTUAL_ENABLED: "false"
     ports: ["8080:8080"]
 
   inventory-service:
@@ -67,6 +70,8 @@ services:
       DB_USER: inventory
       DB_PASSWORD: inventory
       KAFKA_BOOTSTRAP: kafka:19092
+      MANAGEMENT_OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
+      SPRING_THREADS_VIRTUAL_ENABLED: "false"
     ports: ["8081:8081"]
 
   payment-service:
@@ -82,4 +87,31 @@ services:
       DB_USER: payments
       DB_PASSWORD: payments
       KAFKA_BOOTSTRAP: kafka:19092
+      MANAGEMENT_OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
+      SPRING_THREADS_VIRTUAL_ENABLED: "false"
     ports: ["8082:8082"]
+
+  # ---------------- observability ----------------
+  jaeger:                       # distributed traces (OTLP in on 4318 inside the network)
+    image: jaegertracing/all-in-one:1.62.0
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports: ["16686:16686"]      # UI
+
+  prometheus:                   # metrics
+    image: prom/prometheus:v2.55.0
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports: ["9090:9090"]
+
+  grafana:                      # dashboards (anonymous viewer enabled; admin/admin to edit)
+    image: grafana/grafana:11.3.0
+    depends_on: [prometheus, jaeger]
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/order-platform.json
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3000:3000"]

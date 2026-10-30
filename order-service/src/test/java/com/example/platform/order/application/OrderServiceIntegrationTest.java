@@ -8,6 +8,8 @@ import com.example.platform.order.domain.OrderRepository;
 import com.example.platform.order.domain.OrderStatus;
 import com.example.platform.order.outbox.OutboxEvent;
 import com.example.platform.order.outbox.OutboxRepository;
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.Tracer;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
@@ -20,7 +22,9 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.springframework.boot.test.autoconfigure.actuate.observability.AutoConfigureObservability;
 
+@AutoConfigureObservability
 @SpringBootTest(properties = {
         "spring.kafka.listener.auto-startup=false",
         "spring.kafka.admin.auto-create=false",
@@ -36,6 +40,7 @@ class OrderServiceIntegrationTest {
     @Autowired OrderService service;
     @Autowired OrderSaga saga;
     @Autowired SagaRecovery recovery;
+    @Autowired Tracer tracer;
     @Autowired OrderRepository orders;
     @Autowired OutboxRepository outbox;
 
@@ -205,5 +210,20 @@ class OrderServiceIntegrationTest {
         assertThat(report.releaseResent()).isEqualTo(1);
         assertThat(statusOf(order)).isEqualTo(OrderStatus.CANCELLING);
         assertThat(outbox.countByEventType("ReleaseStockRequested")).isEqualTo(2);
+    }
+
+    // ---------- observability ----------
+
+    @Test
+    void outboxRowCarriesTheTraceContextOfTheRequestThatCreatedIt() {
+        Span span = tracer.nextSpan().name("test-request").start();
+        try (Tracer.SpanInScope ignored = tracer.withSpan(span)) {
+            service.place("c-1", LINES, null);
+        } finally {
+            span.end();
+        }
+
+        OutboxEvent event = outbox.findAll().get(0);
+        assertThat(event.getTraceParent()).startsWith("00-").contains(span.context().traceId());
     }
 }

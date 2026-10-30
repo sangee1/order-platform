@@ -26,4 +26,12 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     List<Order> lockStuck(@Param("status") String status,
                           @Param("cutoff") Instant cutoff,
                           @Param("batchSize") int batchSize);
+
+    interface StatusCount {
+        String getStatus();
+        Long getTotal();
+    }
+
+    @Query(value = "SELECT status AS status, COUNT(*) AS total FROM orders GROUP BY status", nativeQuery = true)
+    List<StatusCount> countGroupedByStatus();
 }

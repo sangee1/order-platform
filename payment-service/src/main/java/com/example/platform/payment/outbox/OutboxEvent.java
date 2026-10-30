@@ -25,10 +25,12 @@ public class OutboxEvent {
     @Column(nullable = false)
     private Instant createdAt;
     private Instant publishedAt;
+    /** W3C traceparent of the request or message that produced this event. */
+    private String traceParent;
 
     protected OutboxEvent() {}
 
-    public static OutboxEvent of(String topic, String aggregateId, String eventType, String payload) {
+    public static OutboxEvent of(String topic, String aggregateId, String eventType, String payload, String traceParent) {
         OutboxEvent e = new OutboxEvent();
         e.id = UUID.randomUUID();
         e.topic = topic;
@@ -36,6 +38,7 @@ public class OutboxEvent {
         e.eventType = eventType;
         e.payload = payload;
         e.createdAt = Instant.now();
+        e.traceParent = traceParent;
         return e;
     }
 
@@ -48,4 +51,5 @@ public class OutboxEvent {
     public String getPayload() { return payload; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getPublishedAt() { return publishedAt; }
+    public String getTraceParent() { return traceParent; }
 }
