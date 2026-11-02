@@ -3,3 +3,9 @@ target/
 *.iml
 .vscode/
 .DS_Store
+.git/
+.github/
+.devcontainer/
+docs/
+observability/
+scripts/

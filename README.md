@@ -1,5 +1,7 @@
 # Event-Driven Order Platform
 
+[![CI](https://github.com/your-github-username/order-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/your-github-username/order-platform/actions/workflows/ci.yml)
+
 A Spring Boot 3 / Java 21 microservices backend that demonstrates distributed-consistency patterns:
 **transactional outbox**, **idempotent consumers**, **optimistic locking**, **dead-letter topics** and
 **Testcontainers-based integration tests**.
@@ -50,38 +52,71 @@ stateDiagram-v2
 | `inventory-service` | Stock reservation and release (compensation), idempotent consumer, outbox | 8081 |
 | `payment-service` | Mock payment gateway with idempotency keys, idempotent consumer, outbox | 8082 |
 
-## Run it
+## Quick start
 
-Requires Docker and (for tests/local builds) JDK 21 + Maven.
+Requires Docker (Compose v2) with **at least 6 GB of memory** allocated to it. Pick one option.
 
-```bash
-docker compose up --build
-```
+### Option A: prebuilt images (about a minute)
 
-Try it (stock is seeded: SKU-1001=100, SKU-1002=50, SKU-2001=5):
+CI publishes the images to GitHub Container Registry after every green build on `main`.
 
 ```bash
-# 1. Happy path: PENDING -> PAYMENT_PENDING -> CONFIRMED
-curl -s -X POST localhost:8080/api/orders \
-  -H 'Content-Type: application/json' -H 'Idempotency-Key: demo-1' \
-  -d '{"customerId":"c-1","items":[{"sku":"SKU-1001","quantity":2,"unitPrice":19.99}]}'
-curl -s localhost:8080/api/orders/<id>
-curl -s localhost:8081/api/inventory/SKU-1001        # available 98, reserved 2
-curl -s localhost:8082/api/payments/order/<id>       # COMPLETED
-
-# 2. Payment declined (amounts over 1000 are declined): watch the compensation
-curl -s -X POST localhost:8080/api/orders -H 'Content-Type: application/json' \
-  -d '{"customerId":"c-1","items":[{"sku":"SKU-1002","quantity":1,"unitPrice":1500.00}]}'
-curl -s localhost:8080/api/orders/<id>               # ends CANCELLED, failureReason "Payment failed: Card declined..."
-curl -s localhost:8081/api/inventory/SKU-1002        # back to available 50, reserved 0
-
-# 3. Not enough stock: ends REJECTED, payment is never requested
-curl -s -X POST localhost:8080/api/orders -H 'Content-Type: application/json' \
-  -d '{"customerId":"c-1","items":[{"sku":"SKU-2001","quantity":99,"unitPrice":5.00}]}'
+git clone https://github.com/your-github-username/order-platform.git
+cd order-platform
+docker compose pull
+docker compose up --no-build -d
 ```
 
-Swagger UI: `/swagger-ui.html` on ports 8080, 8081 and 8082.
-Metrics: `/actuator/prometheus` on every service. See [Observability](#observability) for dashboards and traces.
+### Option B: build from source (first build takes several minutes)
+
+```bash
+docker compose up --build -d
+```
+
+Only Docker is needed: Maven and the JDK run inside the build.
+
+### Option C: GitHub Codespaces (nothing to install)
+
+**Code, then Codespaces, then Create codespace on main**, choosing a 4-core / 16 GB machine. In its terminal run Option A.
+Forwarded ports (Grafana, Jaeger, APIs) are listed in the Ports tab.
+
+### Run the demo
+
+```powershell
+# Windows PowerShell
+powershell -ExecutionPolicy Bypass -File scripts/demo.ps1
+```
+```bash
+# macOS / Linux / Codespaces
+./scripts/demo.sh
+```
+
+The script waits for the services, runs the scenarios below, and prints PASS or FAIL for each.
+Run one scenario with `-Scenario happy|declined|nostock|outage` (PowerShell) or `./scripts/demo.sh outage` (bash).
+For a talk track and likely interview questions see [`docs/DEMO.md`](docs/DEMO.md).
+
+| Scenario | What it shows | Final status |
+|---|---|---|
+| `happy` | Stock reserved, payment approved | `CONFIRMED` |
+| `declined` | Payment declined, reserved stock is released (compensation) | `CANCELLED` |
+| `nostock` | Not enough stock, payment never requested | `REJECTED` |
+| `outage` | Payment gateway fails, circuit breaker opens, saga recovers when it heals | `CONFIRMED` |
+
+| What | Where |
+|---|---|
+| order-service / inventory-service / payment-service APIs | http://localhost:8080, :8081, :8082 (Swagger UI at `/swagger-ui.html`) |
+| Grafana dashboard | http://localhost:3000 |
+| Jaeger traces | http://localhost:16686 |
+| Prometheus | http://localhost:9090 |
+
+Stop and clear everything with `docker compose down -v`.
+If you forked this repo, set `IMAGE_PREFIX` in [`.env`](.env) to `ghcr.io/<your-username>`.
+
+<!-- Screenshots: add images to docs/images and uncomment.
+![Grafana dashboard](docs/images/grafana-dashboard.png)
+![One order as one trace in Jaeger](docs/images/jaeger-trace.png)
+![Demo script output](docs/images/demo-output.png)
+-->
 
 ## Observability
 
@@ -105,6 +140,8 @@ saga recovery actions, payment circuit breaker state and call outcomes, Kafka co
 `PAYMENT_PENDING`, the recovery counters rise, and then the orders drain to `CONFIRMED` or `CANCELLED`.
 
 ## Failure demos
+
+`scripts/demo.ps1` / `scripts/demo.sh` automate all of this. The manual commands are kept here for reference.
 
 Ready-made request bodies live in [`docs/demo`](docs/demo), which avoids shell-quoting problems on Windows
 (use `curl.exe`, and `-d @file`). In `docker compose` the saga timeouts are shortened to 15-30 seconds.
@@ -152,6 +189,18 @@ Highlights:
 
 ## Design decisions
 See [`docs/adr`](docs/adr): outbox, optimistic locking, choreography then orchestrated saga, gateway call outside the transaction, saga timeout recovery, gateway resilience, observability.
+
+## Known limitations
+
+Stated up front, because they are real design trade-offs rather than oversights:
+
+- A payment that completes at the moment its order times out leaves a charged but cancelled order. The fix is a refund compensation (see ADR 0006).
+- No authentication: the APIs and the demo-only `/api/admin/gateway` endpoint are open. A gateway with OAuth2/JWT is on the roadmap.
+- The payment gateway is a mock. It simulates idempotency keys, declines and outages, but is not a real provider.
+- One Kafka broker and one PostgreSQL instance per service; Jaeger keeps traces in memory only.
+- Commands re-sent by the timeout sweeper start a new trace rather than continuing the order's original trace.
+- The outbox and processed-message tables are never pruned.
+- No load test results yet.
 
 ## Roadmap
 - [x] order + inventory with outbox, idempotent consumers, optimistic locking

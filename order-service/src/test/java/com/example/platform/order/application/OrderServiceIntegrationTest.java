@@ -17,13 +17,14 @@ import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.actuate.observability.AutoConfigureObservability;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import org.springframework.boot.test.autoconfigure.actuate.observability.AutoConfigureObservability;
 
+// Spring Boot disables tracing in tests by default (the Tracer becomes a no-op); this turns it back on.
 @AutoConfigureObservability
 @SpringBootTest(properties = {
         "spring.kafka.listener.auto-startup=false",
