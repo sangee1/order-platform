@@ -1,6 +1,6 @@
 # Event-Driven Order Platform
 
-[![CI](https://github.com/your-github-username/order-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/your-github-username/order-platform/actions/workflows/ci.yml)
+[![CI](https://github.com/sangee1/order-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/sangee1/order-platform/actions/workflows/ci.yml)
 
 A Spring Boot 3 / Java 21 microservices backend that demonstrates distributed-consistency patterns:
 **transactional outbox**, **idempotent consumers**, **optimistic locking**, **dead-letter topics** and
@@ -61,7 +61,7 @@ Requires Docker (Compose v2) with **at least 6 GB of memory** allocated to it. P
 CI publishes the images to GitHub Container Registry after every green build on `main`.
 
 ```bash
-git clone https://github.com/your-github-username/order-platform.git
+git clone https://github.com/sangee1/order-platform.git
 cd order-platform
 docker compose pull
 docker compose up --no-build -d
