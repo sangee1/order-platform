@@ -1,4 +1,4 @@
-# Event-Driven Order Platform
+# Event Driven Order Platform
 
 [![CI](https://github.com/sangee1/order-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/sangee1/order-platform/actions/workflows/ci.yml)
 
